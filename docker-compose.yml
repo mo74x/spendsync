@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  # 1.application's database (The Ledger)
+  postgres:
+    image: postgres:16-alpine
+    container_name: spendsync-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgrespassword
+      POSTGRES_DB: spendsync
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d # SQL here later
+
+  # 2. Redis for BullMQ
+  redis:
+    image: redis:7-alpine
+    container_name: spendsync-redis
+    ports:
+      - "6379:6379"
+
+  # 3. Odoo's internal database
+  odoo-db:
+    image: postgres:15-alpine
+    container_name: odoo-postgres
+    environment:
+      POSTGRES_USER: odoo
+      POSTGRES_PASSWORD: odoopassword
+      POSTGRES_DB: postgres
+    volumes:
+      - odoo_pgdata:/var/lib/postgresql/data
+
+  # 4. The Odoo ERP System
+  odoo:
+    image: odoo:17.0
+    container_name: spendsync-odoo
+    depends_on:
+      - odoo-db
+    ports:
+      - "8069:8069"
+    environment:
+      - HOST=odoo-db
+      - USER=odoo
+      - PASSWORD=odoopassword
+    volumes:
+      - odoo_data:/var/lib/odoo
+
+volumes:
+  pgdata:
+  odoo_pgdata:
+  odoo_data:
