@@ -31,7 +31,7 @@ export class HmacGuard implements CanActivate {
       );
     }
 
-    const secret = this.configService.get<string>('WEBHOOK_SECRET');
+    const secret = this.configService.getOrThrow<string>('WEBHOOK_SECRET');
     const rawBody = request.rawBody;
 
     if (!rawBody) {
