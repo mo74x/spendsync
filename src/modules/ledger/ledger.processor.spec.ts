@@ -121,7 +121,7 @@ describe('LedgerProcessor', () => {
     expect(mockClient.query).toHaveBeenCalledWith('COMMIT');
     expect(odooSyncQueue.add).toHaveBeenCalledWith(
       'sync-to-odoo',
-      { journalEntryId: 'journal_entry_001' },
+      expect.objectContaining({ journalEntryId: 'journal_entry_001' }),
       expect.objectContaining({ jobId: 'journal_entry_001' }),
     );
     expect(mockClient.release).toHaveBeenCalled();

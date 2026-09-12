@@ -13,7 +13,7 @@ export class WebhooksService {
     @InjectQueue('transaction-ledger') private readonly ledgerQueue: Queue,
   ) {}
 
-  async ingestEvent(dto: CardTransactionWebhookDto) {
+  async ingestEvent(dto: CardTransactionWebhookDto, correlationId?: string) {
     // Enforce atomic idempotency check at the DB boundary
     const query = `
       INSERT INTO webhook_events (source_event_id, event_type, payload, status)
@@ -40,7 +40,7 @@ export class WebhooksService {
     // Dispatch to the background queue for asynchronous processing
     await this.ledgerQueue.add(
       'process-ledger',
-      { webhookEventId: internalEventId, payload: dto },
+      { webhookEventId: internalEventId, payload: dto, correlationId },
       {
         jobId: dto.event_id, // BullMQ level deduplication
         removeOnComplete: true,

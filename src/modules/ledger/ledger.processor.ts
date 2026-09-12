@@ -28,7 +28,11 @@ export class LedgerProcessor extends WorkerHost {
   }
 
   async process(
-    job: Job<{ webhookEventId: string; payload: CardTransactionWebhookDto }>,
+    job: Job<{
+      webhookEventId: string;
+      payload: CardTransactionWebhookDto;
+      correlationId?: string;
+    }>,
   ): Promise<void> {
     const { webhookEventId, payload } = job.data;
 
@@ -127,7 +131,7 @@ export class LedgerProcessor extends WorkerHost {
       // Hand off to the Odoo Worker
       await this.odooSyncQueue.add(
         'sync-to-odoo',
-        { journalEntryId },
+        { journalEntryId, correlationId: job.data.correlationId },
         {
           jobId: journalEntryId, // Idempotency key for the next queue
           attempts: 5, // Resilience: Retry 5 times if Odoo is down

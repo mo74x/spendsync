@@ -1,8 +1,14 @@
-import { Processor, WorkerHost } from '@nestjs/bullmq';
-import { Job } from 'bullmq';
+import {
+  Processor,
+  WorkerHost,
+  InjectQueue,
+  OnWorkerEvent,
+} from '@nestjs/bullmq';
+import { Job, Queue } from 'bullmq';
 import { Injectable, Logger } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { OdooClient } from './odoo.client';
+import { NotificationsService } from '../notifications/notifications.service';
 
 interface JournalEntrySyncRow {
   id: string;
@@ -26,6 +32,8 @@ export class OdooSyncProcessor extends WorkerHost {
   constructor(
     private readonly db: DatabaseService,
     private readonly odoo: OdooClient,
+    @InjectQueue('odoo-sync-dlq') private readonly dlqQueue: Queue,
+    private readonly notifications: NotificationsService,
   ) {
     super();
   }
@@ -132,6 +140,60 @@ export class OdooSyncProcessor extends WorkerHost {
       throw error;
     } finally {
       client.release();
+    }
+  }
+
+  @OnWorkerEvent('failed')
+  async onFailed(
+    job: Job<{ journalEntryId: string }>,
+    error: Error,
+  ): Promise<void> {
+    const attemptsLimit = job.opts?.attempts || 1;
+    if (job.attemptsMade >= attemptsLimit) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      const journalEntryId = job.data.journalEntryId;
+      const jobId = String(job.id || journalEntryId);
+
+      this.logger.error(
+        `Job ${jobId} for journal entry ${journalEntryId} exhausted all ${job.attemptsMade} attempts. Routing to DLQ.`,
+      );
+
+      // Route permanently failed job to Dead Letter Queue
+      await this.dlqQueue.add(
+        'exhausted-odoo-sync',
+        {
+          journalEntryId,
+          error: errorMessage,
+          attemptsMade: job.attemptsMade,
+          failedAt: new Date().toISOString(),
+        },
+        {
+          jobId: `dlq-${jobId}-${Date.now()}`,
+          removeOnComplete: false,
+        },
+      );
+
+      // Dispatch alert to Slack / notification channels
+      await this.notifications.sendDlqAlert({
+        jobId,
+        queueName: 'odoo-sync',
+        journalEntryId,
+        error: errorMessage,
+        attemptsMade: job.attemptsMade,
+        failedAt: new Date().toISOString(),
+      });
+
+      // Update sync tracking status to 'exhausted'
+      await this.db.query(
+        `UPDATE odoo_sync_status 
+         SET status = 'exhausted', last_error = $1, last_attempt_at = NOW() 
+         WHERE journal_entry_id = $2`,
+        [
+          `[DLQ] Exhausted ${job.attemptsMade} attempts: ${errorMessage}`,
+          journalEntryId,
+        ],
+      );
     }
   }
 }

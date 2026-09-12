@@ -2,6 +2,7 @@ import {
   Controller,
   Post,
   Body,
+  Req,
   UseGuards,
   HttpCode,
   HttpStatus,
@@ -9,6 +10,7 @@ import {
 import { HmacGuard } from '../../common/guards/hmac.guard';
 import { CardTransactionWebhookDto } from './dto/card-transaction-webhook.dto';
 import { WebhooksService } from './webhooks.service';
+import type { RequestWithCorrelationId } from '../../common/middleware/request-logger.middleware';
 
 @Controller('api/v1/webhooks')
 export class WebhooksController {
@@ -17,7 +19,10 @@ export class WebhooksController {
   @Post('transactions')
   @UseGuards(HmacGuard)
   @HttpCode(HttpStatus.ACCEPTED) // Always return 202 quickly for webhooks
-  async handleIncomingWebhook(@Body() payload: CardTransactionWebhookDto) {
-    return this.webhooksService.ingestEvent(payload);
+  async handleIncomingWebhook(
+    @Body() payload: CardTransactionWebhookDto,
+    @Req() req?: RequestWithCorrelationId,
+  ) {
+    return this.webhooksService.ingestEvent(payload, req?.correlationId);
   }
 }
