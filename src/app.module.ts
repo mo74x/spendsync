@@ -1,6 +1,9 @@
 import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { BullModule } from '@nestjs/bullmq';
+import { BullBoardModule } from '@bull-board/nestjs';
+import { ExpressAdapter } from '@bull-board/express';
+import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
 import { DatabaseModule } from './modules/database/database.module';
 import { WebhooksController } from './modules/webhooks/webhooks.controller';
 import { WebhooksService } from './modules/webhooks/webhooks.service';
@@ -33,6 +36,24 @@ import { validateEnv } from './config/env.validation';
     BullModule.registerQueue({ name: 'transaction-ledger' }),
     BullModule.registerQueue({ name: 'odoo-sync' }),
     BullModule.registerQueue({ name: 'odoo-sync-dlq' }),
+    BullBoardModule.forRoot({
+      route: '/admin/queues',
+      adapter: ExpressAdapter,
+    }),
+    BullBoardModule.forFeature(
+      {
+        name: 'transaction-ledger',
+        adapter: BullMQAdapter,
+      },
+      {
+        name: 'odoo-sync',
+        adapter: BullMQAdapter,
+      },
+      {
+        name: 'odoo-sync-dlq',
+        adapter: BullMQAdapter,
+      },
+    ),
     HealthModule,
   ],
   controllers: [WebhooksController, AdminController],

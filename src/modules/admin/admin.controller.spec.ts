@@ -1,7 +1,14 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getQueueToken } from '@nestjs/bullmq';
-import { AdminController, FailedSyncRow } from './admin.controller';
+import {
+  AdminController,
+  FailedSyncRow,
+  AdminSyncStats,
+  SyncedHistoryRow,
+  CategoryMappingRow,
+} from './admin.controller';
 import { DatabaseService } from '../database/database.service';
 
 describe('AdminController', () => {
@@ -34,6 +41,81 @@ describe('AdminController', () => {
     }).compile();
 
     controller = module.get<AdminController>(AdminController);
+  });
+
+  describe('getStats', () => {
+    it('should query and return aggregated sync counts', async () => {
+      const mockStats: AdminSyncStats = {
+        synced: 42,
+        pending: 5,
+        failed: 3,
+        total: 50,
+      };
+
+      dbService.query.mockResolvedValueOnce({ rows: [mockStats] });
+
+      const result = await controller.getStats();
+
+      expect(dbService.query).toHaveBeenCalledWith(
+        expect.stringContaining("WHERE status = 'synced'"),
+      );
+      expect(result).toEqual({
+        synced: 42,
+        pending: 5,
+        failed: 3,
+        total: 50,
+      });
+    });
+
+    it('should return zero defaults when query returns empty rows', async () => {
+      dbService.query.mockResolvedValueOnce({ rows: [] });
+
+      const result = await controller.getStats();
+
+      expect(result).toEqual({
+        synced: 0,
+        pending: 0,
+        failed: 0,
+        total: 0,
+      });
+    });
+  });
+
+  describe('getSyncHistory', () => {
+    it('should query successful syncs with limit and return typed rows', async () => {
+      const mockHistory: SyncedHistoryRow[] = [
+        {
+          journal_id: 'je_100',
+          odoo_move_id: 1234,
+          source_event_id: 'evt_webhook_1',
+          transaction_type: 'purchase',
+          amount: '89.99',
+          currency: 'USD',
+          merchant_name: 'Figma',
+          debit_account: '600100',
+          credit_account: '210000',
+          synced_at: new Date('2026-09-12T20:00:00.000Z'),
+        },
+      ];
+
+      dbService.query.mockResolvedValueOnce({ rows: mockHistory });
+
+      const result = await controller.getSyncHistory(15);
+
+      expect(dbService.query).toHaveBeenCalledWith(
+        expect.stringContaining("WHERE oss.status = 'synced'"),
+        [15],
+      );
+      expect(result).toEqual(mockHistory);
+    });
+
+    it('should use default limit of 50 for sync history when omitted', async () => {
+      dbService.query.mockResolvedValueOnce({ rows: [] });
+
+      await controller.getSyncHistory();
+
+      expect(dbService.query).toHaveBeenCalledWith(expect.any(String), [50]);
+    });
   });
 
   describe('getFailedSyncs', () => {
@@ -142,6 +224,130 @@ describe('AdminController', () => {
       expect(mockClient.query).toHaveBeenCalledWith('ROLLBACK');
       expect(mockClient.release).toHaveBeenCalled();
       expect(odooSyncQueue.add).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getCategoryMappings', () => {
+    it('should return all category mappings ordered by category', async () => {
+      const mockMappings: CategoryMappingRow[] = [
+        {
+          category: 'fees',
+          expense_account: '600400',
+          description: 'Bank Fees',
+        },
+        {
+          category: 'software',
+          expense_account: '600100',
+          description: 'IT & Cloud',
+        },
+      ];
+
+      dbService.query.mockResolvedValueOnce({ rows: mockMappings });
+
+      const result = await controller.getCategoryMappings();
+
+      expect(dbService.query).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'SELECT category, expense_account, description FROM category_gl_mapping',
+        ),
+      );
+      expect(result).toEqual(mockMappings);
+    });
+  });
+
+  describe('createCategoryMapping', () => {
+    it('should insert and return a new category mapping when category does not exist', async () => {
+      const dto = {
+        category: 'marketing',
+        expense_account: '600500',
+        description: 'Marketing & Ads',
+      };
+
+      dbService.query
+        .mockResolvedValueOnce({ rows: [] }) // check existing -> none
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              category: 'marketing',
+              expense_account: '600500',
+              description: 'Marketing & Ads',
+            },
+          ],
+        });
+
+      const result = await controller.createCategoryMapping(dto);
+
+      expect(dbService.query).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'SELECT category FROM category_gl_mapping WHERE category = $1',
+        ),
+        ['marketing'],
+      );
+      expect(dbService.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO category_gl_mapping'),
+        ['marketing', '600500', 'Marketing & Ads'],
+      );
+      expect(result).toEqual({
+        category: 'marketing',
+        expense_account: '600500',
+        description: 'Marketing & Ads',
+      });
+    });
+
+    it('should throw ConflictException when category mapping already exists', async () => {
+      const dto = {
+        category: 'software',
+        expense_account: '600100',
+      };
+
+      dbService.query.mockResolvedValueOnce({
+        rows: [{ category: 'software' }],
+      });
+
+      await expect(controller.createCategoryMapping(dto)).rejects.toThrow(
+        ConflictException,
+      );
+    });
+  });
+
+  describe('updateCategoryMapping', () => {
+    it('should update and return category mapping when it exists', async () => {
+      const dto = {
+        expense_account: '600150',
+        description: 'Updated Software',
+      };
+
+      dbService.query.mockResolvedValueOnce({
+        rows: [
+          {
+            category: 'software',
+            expense_account: '600150',
+            description: 'Updated Software',
+          },
+        ],
+      });
+
+      const result = await controller.updateCategoryMapping('software', dto);
+
+      expect(dbService.query).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE category_gl_mapping'),
+        ['600150', 'Updated Software', 'software'],
+      );
+      expect(result).toEqual({
+        category: 'software',
+        expense_account: '600150',
+        description: 'Updated Software',
+      });
+    });
+
+    it('should throw NotFoundException when category mapping does not exist', async () => {
+      dbService.query.mockResolvedValueOnce({ rows: [] });
+
+      await expect(
+        controller.updateCategoryMapping('non_existent', {
+          expense_account: '600999',
+        }),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 });
