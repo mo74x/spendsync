@@ -1,5 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
@@ -24,7 +22,7 @@ export class WebhooksService {
       RETURNING id;
     `;
 
-    const res = await this.db.query(query, [
+    const res = await this.db.query<{ id: string }>(query, [
       dto.event_id,
       dto.event_type,
       JSON.stringify(dto),

@@ -1,21 +1,22 @@
-/* eslint-disable @typescript-eslint/no-unsafe-call */
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
 import {
   CanActivate,
   ExecutionContext,
   Injectable,
+  RawBodyRequest,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
+import { Request } from 'express';
 
 @Injectable()
 export class HmacGuard implements CanActivate {
   constructor(private readonly configService: ConfigService) {}
 
   canActivate(context: ExecutionContext): boolean {
-    const request = context.switchToHttp().getRequest();
+    const request = context
+      .switchToHttp()
+      .getRequest<RawBodyRequest<Request>>();
     const signatureHeader = request.headers['x-signature'] as string;
     const timestampHeader = request.headers['x-timestamp'] as string;
 
