@@ -8,6 +8,7 @@ import { LedgerProcessor } from './modules/ledger/ledger.processor';
 import { OdooSyncProcessor } from './modules/odoo/odoo-sync.processor';
 import { OdooClient } from './modules/odoo/odoo.client';
 import { AdminController } from './modules/admin/admin.controller';
+import { HealthModule } from './modules/health/health.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { AdminController } from './modules/admin/admin.controller';
     }),
     BullModule.registerQueue({ name: 'transaction-ledger' }),
     BullModule.registerQueue({ name: 'odoo-sync' }),
+    HealthModule,
   ],
   controllers: [WebhooksController, AdminController],
   providers: [WebhooksService, LedgerProcessor, OdooSyncProcessor, OdooClient],
