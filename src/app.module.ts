@@ -5,6 +5,8 @@ import { DatabaseModule } from './modules/database/database.module';
 import { WebhooksController } from './modules/webhooks/webhooks.controller';
 import { WebhooksService } from './modules/webhooks/webhooks.service';
 import { LedgerProcessor } from './modules/ledger/ledger.processor';
+import { OdooSyncProcessor } from './modules/odoo/odoo-sync.processor';
+import { OdooClient } from './modules/odoo/odoo.client';
 
 @Module({
   imports: [
@@ -24,6 +26,6 @@ import { LedgerProcessor } from './modules/ledger/ledger.processor';
     BullModule.registerQueue({ name: 'odoo-sync' }),
   ],
   controllers: [WebhooksController],
-  providers: [WebhooksService, LedgerProcessor],
+  providers: [WebhooksService, LedgerProcessor, OdooSyncProcessor, OdooClient],
 })
 export class AppModule {}
