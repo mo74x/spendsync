@@ -6,10 +6,12 @@ import {
   Body,
   Query,
   Logger,
+  UseGuards,
 } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
+import { AdminApiKeyGuard } from './admin-api-key.guard';
 
 export interface FailedSyncRow {
   journal_id: string;
@@ -26,6 +28,7 @@ export interface FailedSyncRow {
 }
 
 @Controller('api/v1/admin')
+@UseGuards(AdminApiKeyGuard)
 export class AdminController {
   private readonly logger = new Logger(AdminController.name);
 
