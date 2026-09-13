@@ -393,9 +393,14 @@ npm run test:watch
 
 # Coverage report
 npm run test:cov
+
+# Run all end-to-end tests (requires PostgreSQL & Redis)
+npm run test:e2e
 ```
 
 ### Test Coverage
+
+#### Unit Tests
 
 | Module | Tests |
 |---|---|
@@ -405,6 +410,15 @@ npm run test:cov
 | `AdminController` | Stats query, sync history, failure listing, retry flow, category mapping CRUD |
 | `OdooSyncProcessor` | Odoo sync success, retry on failure, DLQ routing on exhaustion |
 | `EnvValidation` | Missing required vars, defaults, valid config acceptance |
+
+#### End-to-End (E2E) Suites
+
+| Suite | Description |
+|---|---|
+| `webhooks.e2e-spec.ts` | Valid HMAC ingestion, tampered body rejection, expired/future timestamp tolerance, missing headers, schema validation, and atomic deduplication |
+| `admin.e2e-spec.ts` | `x-api-key` auth guard, sync stats aggregation, Category GL mapping CRUD lifecycle, failure listing, bulk retry-all, and Bull Board Basic Auth |
+| `full-pipeline.e2e-spec.ts` | Complete asynchronous pipeline: Webhook HTTP POST $\rightarrow$ PG `webhook_events` $\rightarrow$ BullMQ queue $\rightarrow$ `LedgerProcessor` $\rightarrow$ balanced `journal_entries` $\rightarrow$ `odoo_sync_status` $\rightarrow$ Admin stats counters |
+| `app.e2e-spec.ts` | Root greeting and `/health` system connectivity checks |
 
 ---
 
