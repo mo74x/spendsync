@@ -3,6 +3,9 @@ import {
   Get,
   Post,
   Put,
+  Delete,
+  HttpCode,
+  HttpStatus,
   Param,
   Body,
   Query,
@@ -29,6 +32,7 @@ export interface FailedSyncRow {
   merchant_name: string;
   debit_account: string;
   credit_account: string;
+  status: string;
   last_error: string | null;
   attempts: number;
   last_attempt_at: Date | null;
@@ -148,6 +152,28 @@ export class AdminController {
     return res.rows[0];
   }
 
+  // Delete an existing category to GL account mapping
+  @Delete('mappings/:category')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async deleteCategoryMapping(
+    @Param('category') categoryParam: string,
+  ): Promise<void> {
+    const category = categoryParam.trim().toLowerCase();
+
+    const res = await this.db.query(
+      'DELETE FROM category_gl_mapping WHERE category = $1 RETURNING category',
+      [category],
+    );
+
+    if (res.rows.length === 0) {
+      throw new NotFoundException(
+        `Category mapping for '${category}' not found`,
+      );
+    }
+
+    this.logger.log(`Deleted GL mapping for category: ${category}`);
+  }
+
   // Fetch dashboard statistics (total synced, pending, failed counts)
   @Get('stats')
   async getStats(): Promise<AdminSyncStats> {
@@ -210,18 +236,88 @@ export class AdminController {
         je.merchant_name,
         je.debit_account, 
         je.credit_account,
+        oss.status,
         oss.last_error, 
         oss.attempts, 
         oss.last_attempt_at
       FROM odoo_sync_status oss
       JOIN journal_entries je ON oss.journal_entry_id = je.id
       JOIN webhook_events we ON je.webhook_event_id = we.id
-      WHERE oss.status = 'failed'
+      WHERE oss.status IN ('failed', 'exhausted')
       ORDER BY oss.last_attempt_at DESC
       LIMIT $1
     `;
     const res = await this.db.query<FailedSyncRow>(query, [limit]);
     return res.rows;
+  }
+
+  // Bulk re-queue all failed and exhausted sync jobs
+  @Post('sync-failures/retry-all')
+  async retryAllFailedSyncs() {
+    const client = await this.db.getClient();
+
+    try {
+      await client.query('BEGIN');
+
+      const failedQuery = `
+        SELECT journal_entry_id
+        FROM odoo_sync_status
+        WHERE status IN ('failed', 'exhausted')
+        FOR UPDATE
+      `;
+      const failedRes = await client.query<{ journal_entry_id: string }>(
+        failedQuery,
+      );
+
+      if (failedRes.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return {
+          message: 'No failed sync jobs found to retry',
+          count: 0,
+          journalIds: [],
+        };
+      }
+
+      const journalIds = failedRes.rows.map((row) => row.journal_entry_id);
+
+      await client.query(
+        `UPDATE odoo_sync_status 
+         SET status = 'pending' 
+         WHERE journal_entry_id = ANY($1::uuid[])`,
+        [journalIds],
+      );
+
+      for (const journalId of journalIds) {
+        await this.odooSyncQueue.add(
+          'sync-to-odoo',
+          { journalEntryId: journalId },
+          {
+            jobId: `retry-${journalId}-${Date.now()}`,
+            attempts: 3,
+            backoff: { type: 'exponential', delay: 2000 },
+          },
+        );
+      }
+
+      await client.query('COMMIT');
+      this.logger.log(
+        `Bulk re-queued ${journalIds.length} failed/exhausted sync jobs`,
+      );
+
+      return {
+        message: `Successfully re-queued ${journalIds.length} sync jobs`,
+        count: journalIds.length,
+        journalIds,
+      };
+    } catch (error: unknown) {
+      await client.query('ROLLBACK');
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      this.logger.error(`Failed to bulk re-queue sync jobs: ${errorMessage}`);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   // Remap an account code and trigger a sync retry

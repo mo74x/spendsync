@@ -14,6 +14,7 @@ import { AdminController } from './modules/admin/admin.controller';
 import { HealthModule } from './modules/health/health.module';
 import { NotificationsService } from './modules/notifications/notifications.service';
 import { RequestLoggerMiddleware } from './common/middleware/request-logger.middleware';
+import { createBullBoardAuthMiddleware } from './common/middleware/bull-board-auth.middleware';
 import { validateEnv } from './config/env.validation';
 
 @Module({
@@ -36,9 +37,17 @@ import { validateEnv } from './config/env.validation';
     BullModule.registerQueue({ name: 'transaction-ledger' }),
     BullModule.registerQueue({ name: 'odoo-sync' }),
     BullModule.registerQueue({ name: 'odoo-sync-dlq' }),
-    BullBoardModule.forRoot({
-      route: '/admin/queues',
-      adapter: ExpressAdapter,
+    BullBoardModule.forRootAsync({
+      imports: [ConfigModule],
+      useFactory: (configService: ConfigService) => {
+        const adminApiKey = configService.get<string>('ADMIN_API_KEY') || '';
+        return {
+          route: '/admin/queues',
+          adapter: ExpressAdapter,
+          middleware: createBullBoardAuthMiddleware(adminApiKey),
+        };
+      },
+      inject: [ConfigService],
     }),
     BullBoardModule.forFeature(
       {

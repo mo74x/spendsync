@@ -224,17 +224,18 @@ npm run start:prod
 ```json
 {
   "event_id": "evt_abc123",
-  "event_type": "transaction.created",
+  "event_type": "purchase",
   "data": {
+    "transaction_id": "txn_789xyz",
     "amount": 149.99,
     "currency": "USD",
-    "merchant_name": "AWS",
-    "card_last4": "4242",
+    "merchant": "AWS",
     "category": "software",
-    "transaction_type": "purchase"
+    "card_last4": "4242"
   }
 }
 ```
+*Note: `event_type` supports `"purchase"`, `"refund"`, and `"fee"`.*
 
 **Response:** `202 Accepted`
 ```json
@@ -271,8 +272,9 @@ All admin endpoints require the `x-api-key` header matching `ADMIN_API_KEY`.
 | Method | Path | Query Params | Description |
 |---|---|---|---|
 | `GET` | `/api/v1/admin/sync-history` | `?limit=50` | Recent successful syncs |
-| `GET` | `/api/v1/admin/sync-failures` | `?limit=50` | Failed syncs with error details |
+| `GET` | `/api/v1/admin/sync-failures` | `?limit=50` | Failed & exhausted syncs with error details |
 | `POST` | `/api/v1/admin/sync-failures/:journalId/retry` | — | Re-queue a failed sync (optional `new_debit_account` in body) |
+| `POST` | `/api/v1/admin/sync-failures/retry-all` | — | Bulk re-queue all failed and exhausted syncs |
 
 #### Category → GL Account Mappings
 
@@ -281,6 +283,7 @@ All admin endpoints require the `x-api-key` header matching `ADMIN_API_KEY`.
 | `GET` | `/api/v1/admin/mappings` | List all category mappings |
 | `POST` | `/api/v1/admin/mappings` | Create a new mapping |
 | `PUT` | `/api/v1/admin/mappings/:category` | Update an existing mapping |
+| `DELETE` | `/api/v1/admin/mappings/:category` | Delete an existing mapping |
 
 **Create mapping body:**
 ```json
@@ -316,7 +319,7 @@ All admin endpoints require the `x-api-key` header matching `ADMIN_API_KEY`.
 
 | Path | Auth | Description |
 |---|---|---|
-| `/admin/queues` | None | Visual BullMQ dashboard (job statuses, retries, failures) |
+| `/admin/queues` | Basic Auth (`admin`:`ADMIN_API_KEY`) or `x-api-key` | Visual BullMQ dashboard (job statuses, retries, failures) |
 
 ---
 

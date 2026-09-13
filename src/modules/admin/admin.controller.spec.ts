@@ -119,7 +119,7 @@ describe('AdminController', () => {
   });
 
   describe('getFailedSyncs', () => {
-    it('should execute query with limit and return typed failed sync rows', async () => {
+    it('should execute query with limit and return typed failed sync rows including exhausted', async () => {
       const mockRows: FailedSyncRow[] = [
         {
           journal_id: 'je_1',
@@ -130,6 +130,7 @@ describe('AdminController', () => {
           merchant_name: 'Stripe',
           debit_account: '600100',
           credit_account: '210000',
+          status: 'exhausted',
           last_error: 'Odoo XML-RPC connection timeout',
           attempts: 3,
           last_attempt_at: new Date('2026-09-12T18:00:00.000Z'),
@@ -141,7 +142,7 @@ describe('AdminController', () => {
       const result = await controller.getFailedSyncs(20);
 
       expect(dbService.query).toHaveBeenCalledWith(
-        expect.stringContaining("WHERE oss.status = 'failed'"),
+        expect.stringContaining("WHERE oss.status IN ('failed', 'exhausted')"),
         [20],
       );
       expect(result).toEqual(mockRows);
@@ -220,6 +221,90 @@ describe('AdminController', () => {
       await expect(
         controller.retryFailedSync(journalId, '600100'),
       ).rejects.toThrow(dbError);
+
+      expect(mockClient.query).toHaveBeenCalledWith('ROLLBACK');
+      expect(mockClient.release).toHaveBeenCalled();
+      expect(odooSyncQueue.add).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('retryAllFailedSyncs', () => {
+    it('should query all failed and exhausted syncs, reset status to pending, and re-queue all jobs', async () => {
+      const mockFailedJobs = [
+        { journal_entry_id: 'je_uuid_1' },
+        { journal_entry_id: 'je_uuid_2' },
+      ];
+
+      mockClient.query
+        .mockResolvedValueOnce(undefined) // BEGIN
+        .mockResolvedValueOnce({ rows: mockFailedJobs }) // SELECT failed/exhausted FOR UPDATE
+        .mockResolvedValueOnce(undefined) // UPDATE status = pending
+        .mockResolvedValueOnce(undefined); // COMMIT
+
+      const result = await controller.retryAllFailedSyncs();
+
+      expect(mockClient.query).toHaveBeenCalledWith('BEGIN');
+      expect(mockClient.query).toHaveBeenCalledWith(
+        expect.stringContaining("WHERE status IN ('failed', 'exhausted')"),
+      );
+      expect(mockClient.query).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "UPDATE odoo_sync_status \n         SET status = 'pending'",
+        ),
+        [['je_uuid_1', 'je_uuid_2']],
+      );
+      expect(odooSyncQueue.add).toHaveBeenCalledTimes(2);
+      expect(odooSyncQueue.add).toHaveBeenCalledWith(
+        'sync-to-odoo',
+        { journalEntryId: 'je_uuid_1' },
+        expect.objectContaining({
+          jobId: expect.stringMatching(/^retry-je_uuid_1-\d+$/),
+          attempts: 3,
+        }),
+      );
+      expect(odooSyncQueue.add).toHaveBeenCalledWith(
+        'sync-to-odoo',
+        { journalEntryId: 'je_uuid_2' },
+        expect.objectContaining({
+          jobId: expect.stringMatching(/^retry-je_uuid_2-\d+$/),
+          attempts: 3,
+        }),
+      );
+      expect(mockClient.query).toHaveBeenCalledWith('COMMIT');
+      expect(mockClient.release).toHaveBeenCalled();
+      expect(result).toEqual({
+        message: 'Successfully re-queued 2 sync jobs',
+        count: 2,
+        journalIds: ['je_uuid_1', 'je_uuid_2'],
+      });
+    });
+
+    it('should return count 0 and rollback when no failed or exhausted jobs exist', async () => {
+      mockClient.query
+        .mockResolvedValueOnce(undefined) // BEGIN
+        .mockResolvedValueOnce({ rows: [] }) // SELECT -> empty
+        .mockResolvedValueOnce(undefined); // ROLLBACK
+
+      const result = await controller.retryAllFailedSyncs();
+
+      expect(mockClient.query).toHaveBeenCalledWith('BEGIN');
+      expect(mockClient.query).toHaveBeenCalledWith('ROLLBACK');
+      expect(odooSyncQueue.add).not.toHaveBeenCalled();
+      expect(mockClient.release).toHaveBeenCalled();
+      expect(result).toEqual({
+        message: 'No failed sync jobs found to retry',
+        count: 0,
+        journalIds: [],
+      });
+    });
+
+    it('should rollback transaction on error and rethrow', async () => {
+      const dbError = new Error('Database connection severed');
+      mockClient.query
+        .mockResolvedValueOnce(undefined) // BEGIN
+        .mockRejectedValueOnce(dbError); // SELECT throws
+
+      await expect(controller.retryAllFailedSyncs()).rejects.toThrow(dbError);
 
       expect(mockClient.query).toHaveBeenCalledWith('ROLLBACK');
       expect(mockClient.release).toHaveBeenCalled();
@@ -347,6 +432,33 @@ describe('AdminController', () => {
         controller.updateCategoryMapping('non_existent', {
           expense_account: '600999',
         }),
+      ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('deleteCategoryMapping', () => {
+    it('should delete category mapping and complete without error when category exists', async () => {
+      dbService.query.mockResolvedValueOnce({
+        rows: [{ category: 'software' }],
+      });
+
+      await expect(
+        controller.deleteCategoryMapping('software'),
+      ).resolves.toBeUndefined();
+
+      expect(dbService.query).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'DELETE FROM category_gl_mapping WHERE category = $1',
+        ),
+        ['software'],
+      );
+    });
+
+    it('should throw NotFoundException when category to delete does not exist', async () => {
+      dbService.query.mockResolvedValueOnce({ rows: [] });
+
+      await expect(
+        controller.deleteCategoryMapping('non_existent'),
       ).rejects.toThrow(NotFoundException);
     });
   });
