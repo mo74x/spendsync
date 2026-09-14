@@ -20,6 +20,8 @@ interface JournalEntrySyncRow {
   credit_account: string;
   card_last4: string;
   merchant_name: string;
+  cost_center: string | null;
+  analytic_account_code: string | null;
   created_at: Date;
   source_event_id: string;
 }
@@ -65,6 +67,15 @@ export class OdooSyncProcessor extends WorkerHost {
         entry.credit_account,
       );
 
+      // Resolve analytical account ID for Odoo 17 analytic distribution if present
+      let analyticDistribution: Record<string, number> | undefined = undefined;
+      if (entry.analytic_account_code) {
+        const analyticOdooId = await this.odoo.getAnalyticAccountIdByCode(
+          entry.analytic_account_code,
+        );
+        analyticDistribution = { [String(analyticOdooId)]: 100 };
+      }
+
       // Construct the Odoo account.move payload
       const accountMovePayload = {
         move_type: 'entry',
@@ -81,6 +92,9 @@ export class OdooSyncProcessor extends WorkerHost {
               name: `${entry.merchant_name} - ${entry.transaction_type}`,
               debit: parseFloat(entry.amount),
               credit: 0.0,
+              ...(analyticDistribution
+                ? { analytic_distribution: analyticDistribution }
+                : {}),
             },
           ],
           // Credit Line Tuple

@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/no-unsafe-call */
+/* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import { Test, TestingModule } from '@nestjs/testing';
 import { getQueueToken } from '@nestjs/bullmq';
@@ -11,7 +13,11 @@ describe('OdooSyncProcessor', () => {
   let processor: OdooSyncProcessor;
   let dbService: { getClient: jest.Mock; query: jest.Mock };
   let mockClient: { query: jest.Mock; release: jest.Mock };
-  let odooClient: { getAccountIdByCode: jest.Mock; executeKw: jest.Mock };
+  let odooClient: {
+    [x: string]: any;
+    getAccountIdByCode: jest.Mock;
+    executeKw: jest.Mock;
+  };
   let dlqQueue: { add: jest.Mock };
   let notificationsService: { sendDlqAlert: jest.Mock };
 
@@ -28,6 +34,7 @@ describe('OdooSyncProcessor', () => {
 
     odooClient = {
       getAccountIdByCode: jest.fn(),
+      getAnalyticAccountIdByCode: jest.fn(),
       executeKw: jest.fn(),
     };
 
@@ -76,6 +83,8 @@ describe('OdooSyncProcessor', () => {
         credit_account: '210000',
         card_last4: '4242',
         merchant_name: 'Stripe Merchant',
+        cost_center: null,
+        analytic_account_code: null,
         source_event_id: 'evt_stripe_123',
       };
 
@@ -107,6 +116,58 @@ describe('OdooSyncProcessor', () => {
         [9999, 'je_entry_101'],
       );
       expect(mockClient.release).toHaveBeenCalled();
+    });
+
+    it('should attach analytic_distribution when analytic_account_code is present', async () => {
+      const mockEntry = {
+        id: 'je_entry_102',
+        webhook_event_id: 'we_2',
+        transaction_type: 'purchase',
+        amount: '150.00',
+        currency: 'USD',
+        debit_account: '600100',
+        credit_account: '210000',
+        card_last4: '4242',
+        merchant_name: 'AWS Cloud',
+        cost_center: 'engineering',
+        analytic_account_code: '1010',
+        source_event_id: 'evt_stripe_456',
+      };
+
+      mockClient.query.mockResolvedValueOnce({ rows: [mockEntry] });
+      odooClient.getAccountIdByCode
+        .mockResolvedValueOnce(10)
+        .mockResolvedValueOnce(20);
+      odooClient.getAnalyticAccountIdByCode.mockResolvedValueOnce(55);
+      odooClient.executeKw
+        .mockResolvedValueOnce(8888)
+        .mockResolvedValueOnce(true);
+
+      const job = createMockJob(1, 5);
+      await processor.process(job);
+
+      expect(odooClient.getAnalyticAccountIdByCode).toHaveBeenCalledWith(
+        '1010',
+      );
+      expect(odooClient.executeKw).toHaveBeenCalledWith(
+        'account.move',
+        'create',
+        [
+          expect.objectContaining({
+            line_ids: [
+              [
+                0,
+                0,
+                expect.objectContaining({
+                  account_id: 10,
+                  analytic_distribution: { '55': 100 },
+                }),
+              ],
+              [0, 0, expect.objectContaining({ account_id: 20 })],
+            ],
+          }),
+        ],
+      );
     });
 
     it('should update status to failed and throw error when Odoo sync fails', async () => {

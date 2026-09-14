@@ -4,6 +4,7 @@ import {
   IsPositive,
   IsString,
   Length,
+  IsOptional,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -35,6 +36,14 @@ export class TransactionDataPayload {
   @IsString()
   @Length(4, 4)
   card_last4: string;
+
+  @IsOptional()
+  @IsString()
+  department?: string;
+
+  @IsOptional()
+  @IsString()
+  cost_center?: string;
 }
 
 export class CardTransactionWebhookDto {

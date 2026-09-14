@@ -231,7 +231,8 @@ npm run start:prod
     "currency": "USD",
     "merchant": "AWS",
     "category": "software",
-    "card_last4": "4242"
+    "card_last4": "4242",
+    "department": "engineering"
   }
 }
 ```
@@ -273,7 +274,7 @@ All admin endpoints require the `x-api-key` header matching `ADMIN_API_KEY`.
 |---|---|---|---|
 | `GET` | `/api/v1/admin/sync-history` | `?limit=50` | Recent successful syncs |
 | `GET` | `/api/v1/admin/sync-failures` | `?limit=50` | Failed & exhausted syncs with error details |
-| `POST` | `/api/v1/admin/sync-failures/:journalId/retry` | — | Re-queue a failed sync (optional `new_debit_account` in body) |
+| `POST` | `/api/v1/admin/sync-failures/:journalId/retry` | — | Re-queue a failed sync (optional `new_debit_account` and `new_analytic_account` in body) |
 | `POST` | `/api/v1/admin/sync-failures/retry-all` | — | Bulk re-queue all failed and exhausted syncs |
 
 #### Category → GL Account Mappings
@@ -291,6 +292,24 @@ All admin endpoints require the `x-api-key` header matching `ADMIN_API_KEY`.
   "category": "office_supplies",
   "expense_account": "600500",
   "description": "Office Supplies & Stationery"
+}
+```
+
+#### Cost Center → Analytical Account Mappings
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/v1/admin/cost-centers` | List all cost center mappings |
+| `POST` | `/api/v1/admin/cost-centers` | Create a new cost center mapping |
+| `PUT` | `/api/v1/admin/cost-centers/:costCenter` | Update an existing cost center mapping |
+| `DELETE` | `/api/v1/admin/cost-centers/:costCenter` | Delete an existing cost center mapping |
+
+**Create cost center mapping body:**
+```json
+{
+  "cost_center": "engineering",
+  "analytic_account_code": "1010",
+  "description": "Engineering & Tech Infrastructure"
 }
 ```
 
@@ -325,13 +344,14 @@ All admin endpoints require the `x-api-key` header matching `ADMIN_API_KEY`.
 
 ## Database Schema
 
-The application uses four core tables, initialized by `migrations/001_initial_schema.sql`:
+The application uses core tables initialized by `migrations/001_initial_schema.sql` and `migrations/002_add_cost_centers_and_analytical_accounts.sql`:
 
 | Table | Purpose |
 |---|---|
 | `webhook_events` | Immutable audit log of all inbound webhook events |
 | `category_gl_mapping` | Maps spend categories to GL expense account codes |
-| `journal_entries` | Double-entry journal entries (debit/credit pairs) |
+| `cost_center_analytic_mapping` | Maps departmental cost centers to Odoo analytical accounts |
+| `journal_entries` | Double-entry journal entries (debit/credit pairs, department, analytical code) |
 | `odoo_sync_status` | Tracks ERP sync state per journal entry |
 
 ---

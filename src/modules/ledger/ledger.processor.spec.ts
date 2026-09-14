@@ -57,6 +57,7 @@ describe('LedgerProcessor', () => {
   function createMockJob(
     eventType: TransactionType,
     category = 'software',
+    costCenter?: string,
   ): Job<{ webhookEventId: string; payload: CardTransactionWebhookDto }> {
     return {
       data: {
@@ -71,6 +72,7 @@ describe('LedgerProcessor', () => {
             merchant: 'GitHub',
             category,
             card_last4: '4242',
+            cost_center: costCenter,
           },
         },
       },
@@ -103,7 +105,7 @@ describe('LedgerProcessor', () => {
       ['software'],
     );
 
-    // Verify journal entry insert: [webhookEventId, event_type, amount, currency, debitAccount, creditAccount, card_last4, merchant]
+    // Verify journal entry insert: [webhookEventId, event_type, amount, currency, debitAccount, creditAccount, card_last4, merchant, costCenter, analyticAccountCode]
     expect(mockClient.query).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO journal_entries'),
       [
@@ -115,6 +117,8 @@ describe('LedgerProcessor', () => {
         clearingAccount, // Credit: Clearing
         '4242',
         'GitHub',
+        null,
+        null,
       ],
     );
 
@@ -125,6 +129,46 @@ describe('LedgerProcessor', () => {
       expect.objectContaining({ jobId: 'journal_entry_001' }),
     );
     expect(mockClient.release).toHaveBeenCalled();
+  });
+
+  it('should resolve cost center and attach analytic account code if provided', async () => {
+    mockClient.query
+      .mockResolvedValueOnce(undefined) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ status: 'pending' }] }) // SELECT status ... FOR UPDATE
+      .mockResolvedValueOnce({ rows: [{ expense_account: '600100' }] }) // category_gl_mapping
+      .mockResolvedValueOnce({ rows: [{ analytic_account_code: '1010' }] }) // cost_center_analytic_mapping
+      .mockResolvedValueOnce({ rows: [{ id: 'journal_entry_cc_01' }] }) // INSERT journal_entries
+      .mockResolvedValueOnce(undefined) // INSERT odoo_sync_status
+      .mockResolvedValueOnce(undefined) // UPDATE webhook_events status = 'processed'
+      .mockResolvedValueOnce(undefined); // COMMIT
+
+    const job = createMockJob(
+      TransactionType.PURCHASE,
+      'software',
+      'engineering',
+    );
+    await processor.process(job);
+
+    expect(mockClient.query).toHaveBeenCalledWith(
+      'SELECT analytic_account_code FROM cost_center_analytic_mapping WHERE cost_center = $1',
+      ['engineering'],
+    );
+
+    expect(mockClient.query).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO journal_entries'),
+      [
+        'evt_row_123',
+        TransactionType.PURCHASE,
+        49.99,
+        'USD',
+        '600100',
+        clearingAccount,
+        '4242',
+        'GitHub',
+        'engineering',
+        '1010',
+      ],
+    );
   });
 
   it('should create double-entry balance for refund (Debit: Clearing, Credit: Expense)', async () => {
@@ -151,6 +195,8 @@ describe('LedgerProcessor', () => {
         '600100', // Credit: Expense
         '4242',
         'GitHub',
+        null,
+        null,
       ],
     );
     expect(mockClient.query).toHaveBeenCalledWith('COMMIT');
@@ -181,6 +227,8 @@ describe('LedgerProcessor', () => {
         clearingAccount, // Credit: Clearing
         '4242',
         'GitHub',
+        null,
+        null,
       ],
     );
     expect(mockClient.query).toHaveBeenCalledWith('COMMIT');

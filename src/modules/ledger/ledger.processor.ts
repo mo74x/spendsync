@@ -88,12 +88,32 @@ export class LedgerProcessor extends WorkerHost {
         creditAccount = this.clearingAccount;
       }
 
+      // Resolve Cost Center / Department & Odoo Analytical Account
+      const rawCostCenter =
+        payload.data.cost_center || payload.data.department || null;
+      let costCenter: string | null = null;
+      let analyticAccountCode: string | null = null;
+
+      if (rawCostCenter) {
+        costCenter = rawCostCenter.trim().toLowerCase();
+        const costCenterRes = await client.query<{
+          analytic_account_code: string;
+        }>(
+          'SELECT analytic_account_code FROM cost_center_analytic_mapping WHERE cost_center = $1',
+          [costCenter],
+        );
+        if (costCenterRes.rows.length > 0) {
+          analyticAccountCode = costCenterRes.rows[0].analytic_account_code;
+        }
+      }
+
       // Record the perfectly balanced journal entry
       const insertJournalQuery = `
         INSERT INTO journal_entries (
           webhook_event_id, transaction_type, amount, currency,
-          debit_account, credit_account, card_last4, merchant_name
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          debit_account, credit_account, card_last4, merchant_name,
+          cost_center, analytic_account_code
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         RETURNING id;
       `;
       const journalRes = await client.query<{ id: string }>(
@@ -107,6 +127,8 @@ export class LedgerProcessor extends WorkerHost {
           creditAccount,
           payload.data.card_last4,
           payload.data.merchant,
+          costCenter,
+          analyticAccountCode,
         ],
       );
       const journalEntryId = journalRes.rows[0].id;

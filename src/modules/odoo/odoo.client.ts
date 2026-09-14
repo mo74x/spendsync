@@ -123,4 +123,24 @@ export class OdooClient implements OnModuleInit {
     }
     return records[0].id;
   }
+
+  // Helper: Convert our string analytic account code or name to Odoo's internal integer ID
+  public async getAnalyticAccountIdByCode(code: string): Promise<number> {
+    const records = await this.executeKw<Array<{ id: number }>>(
+      'account.analytic.account',
+      'search_read',
+      [['|', ['code', '=', code], ['name', '=', code]]],
+      {
+        fields: ['id'],
+        limit: 1,
+      },
+    );
+
+    if (!records || records.length === 0) {
+      throw new Error(
+        `Analytic Account Code '${code}' not found in Odoo Analytic Accounts.`,
+      );
+    }
+    return records[0].id;
+  }
 }

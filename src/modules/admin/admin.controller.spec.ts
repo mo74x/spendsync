@@ -9,6 +9,7 @@ import {
   SyncedHistoryRow,
   CategoryMappingRow,
 } from './admin.controller';
+import { ConfigService } from '@nestjs/config';
 import { DatabaseService } from '../database/database.service';
 
 describe('AdminController', () => {
@@ -37,6 +38,10 @@ describe('AdminController', () => {
       providers: [
         { provide: DatabaseService, useValue: dbService },
         { provide: getQueueToken('odoo-sync'), useValue: odooSyncQueue },
+        {
+          provide: ConfigService,
+          useValue: { get: jest.fn().mockReturnValue('test-admin-key') },
+        },
       ],
     }).compile();
 
@@ -95,6 +100,8 @@ describe('AdminController', () => {
           debit_account: '600100',
           credit_account: '210000',
           synced_at: new Date('2026-09-12T20:00:00.000Z'),
+          cost_center: null,
+          analytic_account_code: null,
         },
       ];
 
@@ -134,6 +141,8 @@ describe('AdminController', () => {
           last_error: 'Odoo XML-RPC connection timeout',
           attempts: 3,
           last_attempt_at: new Date('2026-09-12T18:00:00.000Z'),
+          cost_center: null,
+          analytic_account_code: null,
         },
       ];
 
@@ -187,6 +196,32 @@ describe('AdminController', () => {
       );
       expect(mockClient.query).toHaveBeenCalledWith('COMMIT');
       expect(mockClient.release).toHaveBeenCalled();
+      expect(result).toEqual({
+        message: 'Sync job re-queued successfully',
+        journalId,
+      });
+    });
+
+    it('should update analytic account when newAnalyticAccount is provided', async () => {
+      const journalId = 'je_999';
+      const newAnalyticAccount = '1010';
+
+      const result = await controller.retryFailedSync(
+        journalId,
+        undefined,
+        newAnalyticAccount,
+      );
+
+      expect(mockClient.query).toHaveBeenCalledWith('BEGIN');
+      expect(mockClient.query).toHaveBeenCalledWith(
+        'UPDATE journal_entries SET analytic_account_code = $1 WHERE id = $2',
+        [newAnalyticAccount, journalId],
+      );
+      expect(mockClient.query).toHaveBeenCalledWith(
+        "UPDATE odoo_sync_status SET status = 'pending' WHERE journal_entry_id = $1",
+        [journalId],
+      );
+      expect(mockClient.query).toHaveBeenCalledWith('COMMIT');
       expect(result).toEqual({
         message: 'Sync job re-queued successfully',
         journalId,
@@ -332,9 +367,7 @@ describe('AdminController', () => {
       const result = await controller.getCategoryMappings();
 
       expect(dbService.query).toHaveBeenCalledWith(
-        expect.stringContaining(
-          'SELECT category, expense_account, description FROM category_gl_mapping',
-        ),
+        expect.stringContaining('FROM category_gl_mapping'),
       );
       expect(result).toEqual(mockMappings);
     });
@@ -459,6 +492,158 @@ describe('AdminController', () => {
 
       await expect(
         controller.deleteCategoryMapping('non_existent'),
+      ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('getCostCenterMappings', () => {
+    it('should query and return ordered cost center mappings', async () => {
+      const mockMappings = [
+        {
+          cost_center: 'engineering',
+          analytic_account_code: '1010',
+          description: 'Engineering',
+        },
+        {
+          cost_center: 'sales',
+          analytic_account_code: '1030',
+          description: 'Sales',
+        },
+      ];
+
+      dbService.query.mockResolvedValueOnce({ rows: mockMappings });
+
+      const result = await controller.getCostCenterMappings();
+
+      expect(dbService.query).toHaveBeenCalledWith(
+        expect.stringContaining('FROM cost_center_analytic_mapping'),
+      );
+      expect(result).toEqual(mockMappings);
+    });
+  });
+
+  describe('createCostCenterMapping', () => {
+    it('should insert and return created cost center mapping when valid and unique', async () => {
+      const dto = {
+        cost_center: 'finance',
+        analytic_account_code: '1050',
+        description: 'Finance & Admin',
+      };
+
+      dbService.query
+        .mockResolvedValueOnce({ rows: [] }) // check existing -> none
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              cost_center: 'finance',
+              analytic_account_code: '1050',
+              description: 'Finance & Admin',
+            },
+          ],
+        });
+
+      const result = await controller.createCostCenterMapping(dto);
+
+      expect(dbService.query).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'SELECT cost_center FROM cost_center_analytic_mapping WHERE cost_center = $1',
+        ),
+        ['finance'],
+      );
+      expect(dbService.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO cost_center_analytic_mapping'),
+        ['finance', '1050', 'Finance & Admin'],
+      );
+      expect(result).toEqual({
+        cost_center: 'finance',
+        analytic_account_code: '1050',
+        description: 'Finance & Admin',
+      });
+    });
+
+    it('should throw ConflictException when cost center mapping already exists', async () => {
+      const dto = {
+        cost_center: 'engineering',
+        analytic_account_code: '1010',
+      };
+
+      dbService.query.mockResolvedValueOnce({
+        rows: [{ cost_center: 'engineering' }],
+      });
+
+      await expect(controller.createCostCenterMapping(dto)).rejects.toThrow(
+        ConflictException,
+      );
+    });
+  });
+
+  describe('updateCostCenterMapping', () => {
+    it('should update and return cost center mapping when it exists', async () => {
+      const dto = {
+        analytic_account_code: '1015',
+        description: 'Updated Engineering',
+      };
+
+      dbService.query.mockResolvedValueOnce({
+        rows: [
+          {
+            cost_center: 'engineering',
+            analytic_account_code: '1015',
+            description: 'Updated Engineering',
+          },
+        ],
+      });
+
+      const result = await controller.updateCostCenterMapping(
+        'engineering',
+        dto,
+      );
+
+      expect(dbService.query).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE cost_center_analytic_mapping'),
+        ['1015', 'Updated Engineering', 'engineering'],
+      );
+      expect(result).toEqual({
+        cost_center: 'engineering',
+        analytic_account_code: '1015',
+        description: 'Updated Engineering',
+      });
+    });
+
+    it('should throw NotFoundException when cost center mapping does not exist', async () => {
+      dbService.query.mockResolvedValueOnce({ rows: [] });
+
+      await expect(
+        controller.updateCostCenterMapping('non_existent', {
+          analytic_account_code: '9999',
+        }),
+      ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('deleteCostCenterMapping', () => {
+    it('should delete cost center mapping when it exists', async () => {
+      dbService.query.mockResolvedValueOnce({
+        rows: [{ cost_center: 'engineering' }],
+      });
+
+      await expect(
+        controller.deleteCostCenterMapping('engineering'),
+      ).resolves.toBeUndefined();
+
+      expect(dbService.query).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'DELETE FROM cost_center_analytic_mapping WHERE cost_center = $1',
+        ),
+        ['engineering'],
+      );
+    });
+
+    it('should throw NotFoundException when cost center to delete does not exist', async () => {
+      dbService.query.mockResolvedValueOnce({ rows: [] });
+
+      await expect(
+        controller.deleteCostCenterMapping('non_existent'),
       ).rejects.toThrow(NotFoundException);
     });
   });
